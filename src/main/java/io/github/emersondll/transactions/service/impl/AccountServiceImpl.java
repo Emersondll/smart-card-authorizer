@@ -51,6 +51,7 @@ public class AccountServiceImpl implements AccountService {
         log.info("Start find account by id");
         Optional<AccountDocument> response = repository.findById(accountId);
 
+        //if (response.isEmpty()) {
         if (response.isEmpty()) {
             log.error("find account by id");
             throw new SQLDataException("Id Not Found");
