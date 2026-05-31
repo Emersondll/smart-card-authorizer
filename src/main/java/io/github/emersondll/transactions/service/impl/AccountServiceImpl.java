@@ -1,64 +1,117 @@
 package io.github.emersondll.transactions.service.impl;
 
+import java.util.Objects;
+import java.util.Optional;
+
+import org.springframework.stereotype.Service;
+
 import io.github.emersondll.transactions.config.constants.RabbitMqConstants;
 import io.github.emersondll.transactions.document.AccountDocument;
+import io.github.emersondll.transactions.exception.AccountNotFoundException;
 import io.github.emersondll.transactions.mapper.AccountMapper;
 import io.github.emersondll.transactions.model.request.AccountRequest;
+import io.github.emersondll.transactions.model.response.AccountDetailResponse;
 import io.github.emersondll.transactions.model.response.AccountResponse;
 import io.github.emersondll.transactions.repository.AccountRepository;
 import io.github.emersondll.transactions.service.AccountService;
 import io.github.emersondll.transactions.service.RabbitMqService;
-import lombok.AllArgsConstructor;
-import lombok.extern.log4j.Log4j2;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-import org.springframework.util.ObjectUtils;
+import lombok.extern.slf4j.Slf4j;
 
-import java.sql.SQLDataException;
-import java.util.Optional;
-
+/**
+ * Business logic implementation for account management.
+ *
+ * <p>Responsibilities:
+ * <ul>
+ *   <li>Idempotent account creation: returns the existing account if the document
+ *       number is already registered, otherwise creates and persists a new one.</li>
+ *   <li>Account retrieval by ID with proper not-found handling.</li>
+ *   <li>Publishing domain events to RabbitMQ when a new account is created.</li>
+ * </ul>
+ *
+ * <p>Thread Safety: Stateless service; thread-safe as a Spring singleton.</p>
+ *
+ * @author Emerson Lima
+ * @version 1.0
+ * @since 1.0.0
+ * @see AccountRepository for persistence operations
+ * @see AccountMapper for DTO conversions
+ * @see RabbitMqService for event publishing
+ */
 @Service
-@Log4j2
-@AllArgsConstructor
+@Slf4j
 public class AccountServiceImpl implements AccountService {
-    private AccountRepository repository;
-    private AccountMapper mapper;
-    @Autowired
-    private RabbitMqService mqService;
 
-    public AccountResponse createAccount(final AccountRequest request) {
-        log.info("Start Access method createAccount in Service ");
-        AccountDocument document = findByDocumentNumber(request.getDocumentNumber());
-        if (ObjectUtils.isEmpty(document)) {
-            log.info("New Account ");
-            AccountResponse response = mapper.convertDocumentToResponse(repository.save(mapper.convertRequestToDocument(request)));
-            log.info("Finished method createAccount in Service ");
-            mqService.send(RabbitMqConstants.ACCOUNT, "New AccountID Created: ".concat(response.getAccountId()));
-            return response;
-        }
-        log.info("Finished method createAccount in Service returning Old Account ");
-        return mapper.convertDocumentToResponse(document);
+    private final AccountRepository repository;
+    private final AccountMapper mapper;
+    private final RabbitMqService mqService;
 
+    /**
+     * Constructor-based dependency injection.
+     *
+     * @param repository repository for account persistence operations (non-null)
+     * @param mapper     mapper for converting between request/document/response (non-null)
+     * @param mqService  service for publishing domain events to RabbitMQ (non-null)
+     * @throws NullPointerException if any dependency is null
+     */
+    public AccountServiceImpl(AccountRepository repository,
+                              AccountMapper mapper,
+                              RabbitMqService mqService) {
+        this.repository = Objects.requireNonNull(repository, "AccountRepository cannot be null");
+        this.mapper = Objects.requireNonNull(mapper, "AccountMapper cannot be null");
+        this.mqService = Objects.requireNonNull(mqService, "RabbitMqService cannot be null");
     }
 
-    public AccountDocument findByDocumentNumber(String documentNumber) {
-        return repository.findByDocumentNumber(documentNumber);
-    }
-
-
+    /**
+     * {@inheritDoc}
+     *
+     * <p>If an account already exists for the document number, it is returned immediately
+     * without creating a duplicate. Otherwise a new account is persisted and an event
+     * is published to the {@code ACCOUNT} queue.</p>
+     */
     @Override
-    public AccountResponse findById(String accountId) throws Exception {
-        log.info("Start find account by id");
-        Optional<AccountDocument> response = repository.findById(accountId);
+    public AccountResponse createAccount(AccountRequest request) {
+        Objects.requireNonNull(request, "AccountRequest cannot be null");
+        log.info("Creating account. documentNumber={}", request.documentNumber());
 
-        //if (response.isEmpty()) {
-        if (response.isEmpty()) {
-            log.error("find account by id");
-            throw new SQLDataException("Id Not Found");
+        AccountDocument existing = repository.findByDocumentNumber(request.documentNumber());
+        if (existing != null) {
+            log.info("Account already exists. accountId={}", existing.getAccountId());
+            return mapper.convertDocumentToResponse(existing);
         }
-        log.info("Finished find account by id");
-        return mapper.convertDocumentToResponseComplete(response.get());
 
+        AccountDocument created = repository.save(mapper.convertRequestToDocument(request));
+        log.info("New account created. accountId={}", created.getAccountId());
 
+        mqService.send(RabbitMqConstants.ACCOUNT,
+                "New AccountID Created: " + created.getAccountId());
+
+        return mapper.convertDocumentToResponse(created);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @throws AccountNotFoundException if no account exists with the given ID
+     */
+    @Override
+    public AccountDetailResponse findById(String accountId) {
+        Objects.requireNonNull(accountId, "Account ID cannot be null");
+        log.info("Finding account. accountId={}", accountId);
+
+        return repository.findById(accountId)
+                .map(mapper::convertDocumentToDetailResponse)
+                .orElseThrow(() -> {
+                    log.warn("Account not found. accountId={}", accountId);
+                    return new AccountNotFoundException(accountId);
+                });
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public AccountDocument findByDocumentNumber(String documentNumber) {
+        Objects.requireNonNull(documentNumber, "Document number cannot be null");
+        return repository.findByDocumentNumber(documentNumber);
     }
 }
