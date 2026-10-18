@@ -2,6 +2,17 @@
 
 Microserviço de autorização de transações de cartão de crédito/débito, simulando as principais operações financeiras: compra à vista, compra parcelada, saque e pagamento.
 
+## Sumário
+
+- [Desafios Atendidos](#desafios-atendidos)
+- [Stack Tecnológica](#stack-tecnológica)
+- [Arquitetura](#arquitetura)
+- [Como Executar Localmente](#como-executar-localmente)
+- [Endpoints da API](#endpoints-da-api)
+- [Exemplo via cURL](#exemplo-via-curl)
+- [Demonstração](#demonstração)
+- [Desenvolvedor](#desenvolvedor)
+
 ---
 
 ## Desafios Atendidos
